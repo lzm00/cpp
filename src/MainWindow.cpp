@@ -21,6 +21,7 @@
 #include <QSize>
 #include <QSizePolicy>
 #include <QStackedLayout>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVideoWidget>
@@ -36,6 +37,7 @@ public:
 protected:
     void resizeEvent(QResizeEvent *event) override
     {
+        // 窗口尺寸变化时，保持整张地图按比例缩放显示。
         QGraphicsView::resizeEvent(event);
         if (scene()) {
             fitInView(scene()->sceneRect(), Qt::KeepAspectRatio);
@@ -47,6 +49,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
       m_scene(new GameScene(this))
 {
+    // 主界面由左侧游戏地图和右侧控制面板组成。
     setWindowTitle(QStringLiteral("峡谷守卫战 Valley Guardian TD"));
     resize(1280, 824);
 
@@ -61,6 +64,7 @@ MainWindow::MainWindow(QWidget *parent)
     rootLayout->setSpacing(14);
 
     auto *view = new AutoFitGraphicsView(m_scene, m_gamePage);
+    // QGraphicsView 负责把 GameScene 显示出来。
     view->setRenderHint(QPainter::Antialiasing, true);
     view->setMinimumSize(1000, 750);
     view->setFrameShape(QFrame::NoFrame);
@@ -70,6 +74,7 @@ MainWindow::MainWindow(QWidget *parent)
     rootLayout->addWidget(view, 1);
 
     auto *panel = new QWidget(m_gamePage);
+    // 右侧面板显示资源、波次、建塔按钮和技能按钮。
     panel->setFixedWidth(220);
     auto *panelLayout = new QVBoxLayout(panel);
     panelLayout->setContentsMargins(10, 8, 10, 8);
@@ -126,6 +131,9 @@ MainWindow::MainWindow(QWidget *parent)
     auto *freezeSkillButton = new QPushButton(panel);
     auto *shieldSkillButton = new QPushButton(panel);
     auto *speedSkillButton = new QPushButton(panel);
+    auto *crystalShieldButton = new QPushButton(QStringLiteral("水晶护盾"), panel);
+    auto *crystalShockwaveButton = new QPushButton(QStringLiteral("水晶冲击波"), panel);
+    auto *timeFreezeButton = new QPushButton(QStringLiteral("时间冻结"), panel);
     auto *crystalFailureButton = new QPushButton(panel);
     startButton->setObjectName(QStringLiteral("startImageButton"));
     startButton->setText(QString());
@@ -134,6 +142,12 @@ MainWindow::MainWindow(QWidget *parent)
     startButton->setMinimumHeight(66);
     resetButton->setMinimumHeight(34);
     battleSongButton->setMinimumHeight(34);
+    crystalShieldButton->setMinimumHeight(34);
+    crystalShockwaveButton->setMinimumHeight(34);
+    timeFreezeButton->setMinimumHeight(34);
+    crystalShieldButton->setToolTip(QStringLiteral("蓝色水晶 5 秒内不掉血，冷却 20 秒"));
+    crystalShockwaveButton->setToolTip(QStringLiteral("清除蓝色水晶附近 180 范围内敌人，冷却 25 秒"));
+    timeFreezeButton->setToolTip(QStringLiteral("所有敌人停止移动 1 秒，冷却 18 秒"));
     firstToolbarButton->setObjectName(QStringLiteral("sideImageButton"));
     firstToolbarButton->setText(QString());
     firstToolbarButton->setIcon(QIcon(QStringLiteral(R"(D:\cpp\picture\2b3a92dd9c19b0ab73c17b0a37d802a9.jpg)")));
@@ -145,6 +159,7 @@ MainWindow::MainWindow(QWidget *parent)
     secondToolbarButton->setIconSize(QSize(188, 52));
     secondToolbarButton->setMinimumHeight(56);
     auto setupSkillButton = [](QPushButton *button, const QString &imagePath, const QString &tooltip) {
+        // 统一设置图片技能按钮的外观。
         button->setObjectName(QStringLiteral("skillImageButton"));
         button->setText(QString());
         button->setToolTip(tooltip);
@@ -184,6 +199,9 @@ MainWindow::MainWindow(QWidget *parent)
     panelLayout->addWidget(resetButton);
     panelLayout->addWidget(battleSongButton);
     panelLayout->addLayout(imageButtonGrid);
+    panelLayout->addWidget(crystalShieldButton);
+    panelLayout->addWidget(crystalShockwaveButton);
+    panelLayout->addWidget(timeFreezeButton);
 
     m_messageLabel = new QLabel(QStringLiteral("选择塔并点击建塔点，准备守卫峡谷。"), panel);
     m_messageLabel->setWordWrap(true);
@@ -268,13 +286,46 @@ MainWindow::MainWindow(QWidget *parent)
         }
     )"));
 
+    auto startCooldown = [](QPushButton *button, const QString &readyText, int cooldownSeconds) {
+        button->setEnabled(false);
+        auto *cooldownTimer = new QTimer(button);
+        int *remainingSeconds = new int(cooldownSeconds);
+        button->setText(QStringLiteral("%1 (%2s)").arg(readyText).arg(*remainingSeconds));
+        QObject::connect(cooldownTimer, &QTimer::timeout, button, [button, cooldownTimer, remainingSeconds, readyText]() {
+            --(*remainingSeconds);
+            if (*remainingSeconds <= 0) {
+                cooldownTimer->stop();
+                cooldownTimer->deleteLater();
+                delete remainingSeconds;
+                button->setText(readyText);
+                button->setEnabled(true);
+                return;
+            }
+            button->setText(QStringLiteral("%1 (%2s)").arg(readyText).arg(*remainingSeconds));
+        });
+        cooldownTimer->start(1000);
+    };
+
     connect(startButton, &QPushButton::clicked, this, &MainWindow::handleStartButtonClicked);
+    // 按钮和场景之间通过 Qt 信号槽连接。
     connect(battleSongButton, &QPushButton::clicked, this, &MainWindow::playBattleSong);
     connect(firstToolbarButton, &QPushButton::clicked, this, &MainWindow::playFirstToolbarSound);
     connect(secondToolbarButton, &QPushButton::clicked, this, &MainWindow::playSecondToolbarSound);
     connect(freezeSkillButton, &QPushButton::clicked, m_scene, &GameScene::freezeAllEnemies);
     connect(shieldSkillButton, &QPushButton::clicked, m_scene, &GameScene::shieldAllEnemies);
     connect(speedSkillButton, &QPushButton::clicked, m_scene, &GameScene::speedBoostAllEnemies);
+    connect(crystalShieldButton, &QPushButton::clicked, this, [this, crystalShieldButton, startCooldown]() {
+        m_scene->activateCrystalShield();
+        startCooldown(crystalShieldButton, QStringLiteral("水晶护盾"), 20);
+    });
+    connect(crystalShockwaveButton, &QPushButton::clicked, this, [this, crystalShockwaveButton, startCooldown]() {
+        m_scene->activateCrystalShockwave();
+        startCooldown(crystalShockwaveButton, QStringLiteral("水晶冲击波"), 25);
+    });
+    connect(timeFreezeButton, &QPushButton::clicked, this, [this, timeFreezeButton, startCooldown]() {
+        m_scene->activateTimeFreeze();
+        startCooldown(timeFreezeButton, QStringLiteral("时间冻结"), 18);
+    });
     connect(crystalFailureButton, &QPushButton::clicked, m_scene, &GameScene::triggerCrystalExplosionFailure);
     connect(resetButton, &QPushButton::clicked, m_scene, &GameScene::resetGame);
     connect(m_scene, &GameScene::statsChanged, this, &MainWindow::updateStats);
@@ -288,6 +339,7 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::updateStats(int gold, int lives, int wave, int maxWaves)
 {
+    // 游戏场景发出 statsChanged 后，这里刷新右侧状态文本。
     m_goldLabel->setText(QStringLiteral("金币：%1").arg(gold));
     m_livesLabel->setText(QStringLiteral("基地生命：%1").arg(lives));
     m_waveLabel->setText(QStringLiteral("波次：%1 / %2").arg(wave).arg(maxWaves));
@@ -295,6 +347,7 @@ void MainWindow::updateStats(int gold, int lives, int wave, int maxWaves)
 
 void MainWindow::showGameFinished(bool victory, const QString &message)
 {
+    // 游戏结束时停止背景音乐，并播放胜利或失败视频。
     stopBackgroundMusic();
     m_messageLabel->setText(message);
     playResultVideo(victory);
@@ -315,6 +368,7 @@ void MainWindow::restartAfterResultVideo()
 
 void MainWindow::handleStartButtonClicked()
 {
+    // 开始新波次时，先播放按钮音效和背景音乐。
     playStartSound();
     startBackgroundMusic();
     if (m_scene) {
@@ -324,6 +378,7 @@ void MainWindow::handleStartButtonClicked()
 
 QPushButton *MainWindow::createTowerButton(TowerType type)
 {
+    // 根据炮塔类型生成右侧的建塔按钮。
     const int cost = Tower::buildCost(type);
     QString detail;
     switch (type) {
@@ -371,6 +426,7 @@ void MainWindow::selectTower(TowerType type)
 
 QWidget *MainWindow::createVideoOverlay(QWidget *parent)
 {
+    // 覆盖在游戏页面上的全屏视频层，用于开场和结算。
     auto *overlay = new QWidget(parent);
     overlay->setObjectName(QStringLiteral("resultOverlay"));
     overlay->setAutoFillBackground(true);
@@ -380,6 +436,12 @@ QWidget *MainWindow::createVideoOverlay(QWidget *parent)
         }
         QWidget#resultButtonPanel {
             background: rgba(0, 0, 0, 180);
+        }
+        QLabel#resultStatsLabel {
+            color: #fff8df;
+            font-size: 18px;
+            font-weight: 700;
+            padding: 8px 18px;
         }
         QPushButton#resultButton {
             background: #fffdf4;
@@ -409,8 +471,13 @@ QWidget *MainWindow::createVideoOverlay(QWidget *parent)
     m_resultButtonPanel = new QWidget(overlay);
     m_resultButtonPanel->setObjectName(QStringLiteral("resultButtonPanel"));
     auto *buttonLayout = new QHBoxLayout(m_resultButtonPanel);
-    buttonLayout->setContentsMargins(0, 14, 0, 14);
+    buttonLayout->setContentsMargins(18, 14, 18, 14);
     buttonLayout->setSpacing(16);
+
+    m_resultStatsLabel = new QLabel(m_resultButtonPanel);
+    m_resultStatsLabel->setObjectName(QStringLiteral("resultStatsLabel"));
+    m_resultStatsLabel->setWordWrap(true);
+    buttonLayout->addWidget(m_resultStatsLabel, 1);
     buttonLayout->addStretch(1);
 
     auto *restartButton = new QPushButton(QStringLiteral("重新开始"), m_resultButtonPanel);
@@ -460,6 +527,7 @@ void MainWindow::playIntroVideo()
         return;
     }
 
+    // 程序启动后播放开场视频；文件不存在时直接回到游戏页面。
     const QString introPath = QStringLiteral(R"(D:\cpp\picture\1c34b3acec1a5b6fd8f36eaef86d0149.mp4)");
     if (!QFileInfo::exists(introPath)) {
         qDebug() << "Intro video file does not exist:" << introPath;
@@ -489,6 +557,7 @@ void MainWindow::playResultVideo(bool victory)
         return;
     }
 
+    // 根据胜负选择不同的结算视频。
     m_resultVideoMode = true;
     m_resultButtonPanel->hide();
     m_videoOverlay->show();
@@ -573,6 +642,7 @@ void MainWindow::playSecondToolbarSound()
 
 void MainWindow::startBackgroundMusic()
 {
+    // 背景音乐设置为无限循环，只在第一次调用时创建播放器。
     if (!m_backgroundMusicPlayer) {
         m_backgroundMusicPlayer = new QMediaPlayer(this);
         m_backgroundAudioOutput = new QAudioOutput(this);
@@ -596,6 +666,16 @@ void MainWindow::stopBackgroundMusic()
 
 void MainWindow::showResultButtons()
 {
+    if (m_resultStatsLabel && m_scene) {
+        m_resultStatsLabel->setText(QStringLiteral("结算统计\n总击杀数：%1    漏掉的小兵：%2    剩余金币：%3\n已通关波数：%4 / %5    最高防御塔等级：%6    使用技能次数：%7")
+                                        .arg(m_scene->killCount())
+                                        .arg(m_scene->leakedCount())
+                                        .arg(m_scene->gold())
+                                        .arg(m_scene->completedWaveCount())
+                                        .arg(m_scene->maxWaves())
+                                        .arg(m_scene->highestTowerLevel())
+                                        .arg(m_scene->skillUseCount()));
+    }
     if (m_resultButtonPanel) {
         m_resultButtonPanel->show();
     }
@@ -603,6 +683,7 @@ void MainWindow::showResultButtons()
 
 void MainWindow::hideResultVideo()
 {
+    // 关闭视频层并切回游戏页面。
     if (m_videoPlayer) {
         m_videoPlayer->stop();
     }

@@ -8,11 +8,14 @@
 #include <QGraphicsPixmapItem>
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsVideoItem>
+#include <QGraphicsView>
 #include <QLineF>
 #include <QMediaPlayer>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QPushButton>
 #include <QTransform>
 #include <QUrl>
 
@@ -21,6 +24,7 @@
 GameScene::GameScene(QObject *parent)
     : QGraphicsScene(parent)
 {
+    // 构造场景时先准备地图，再启动定时器驱动游戏循环。
     setupMap();
     loadBackground();
 
@@ -32,6 +36,7 @@ GameScene::GameScene(QObject *parent)
 
 QList<Enemy *> GameScene::enemiesInRange(const QPointF &center, qreal range) const
 {
+    // 给炮塔查询射程内的有效敌人。
     QList<Enemy *> result;
     for (Enemy *enemy : m_enemies) {
         if (!enemy || enemy->isDead() || enemy->reachedEnd()) {
@@ -50,11 +55,19 @@ void GameScene::launchProjectile(Tower *tower, Enemy *target)
         return;
     }
 
+    // 炮塔攻击时创建子弹，并交给场景后续更新和删除。
     auto *projectile = new Projectile(tower->pos(),
                                       target,
                                       tower->damage(),
                                       tower->slowMultiplier(),
                                       tower->slowDuration(),
+                                      tower->critChance(),
+                                      tower->critMultiplier(),
+                                      tower->explosionRadius(),
+                                      tower->explosionDamageRatio(),
+                                      tower->burnDamage(),
+                                      tower->burnTicks(),
+                                      tower->burnIntervalMs(),
                                       projectileColor(tower->towerType()));
     m_projectiles.append(projectile);
     addItem(projectile);
@@ -80,8 +93,39 @@ int GameScene::maxWaves() const
     return m_maxWaves;
 }
 
+int GameScene::killCount() const
+{
+    return m_killCount;
+}
+
+int GameScene::leakedCount() const
+{
+    return m_leakedCount;
+}
+
+int GameScene::skillUseCount() const
+{
+    return m_skillUseCount;
+}
+
+int GameScene::highestTowerLevel() const
+{
+    return m_highestTowerLevel;
+}
+
+int GameScene::completedWaveCount() const
+{
+    return m_completedWaves;
+}
+
+qreal GameScene::towerRangeBonusAt(const QPointF &position) const
+{
+    return m_highlandArea.contains(position) ? 42.0 : 0.0;
+}
+
 void GameScene::startNextWave()
 {
+    // 每次开始新波次前，先检查游戏是否结束或上一波是否还没清完。
     if (m_gameOver) {
         emit messageChanged(QStringLiteral("本局已经结束，请重新开始。"));
         return;
@@ -99,16 +143,42 @@ void GameScene::startNextWave()
 
     ++m_wave;
     m_spawnedThisWave = 0;
-    m_spawnQueue.clear();
-    const int enemyCount = 8 + m_wave * 4;
-    for (int i = 0; i < enemyCount; ++i) {
-        if (i % 7 == 6) {
-            m_spawnQueue.append(EnemyType::Tank);
-        } else if (i % 4 == 3) {
-            m_spawnQueue.append(EnemyType::Assassin);
+    m_topLaneSpawnQueue.clear();
+    m_middleLaneSpawnQueue.clear();
+    m_bottomLaneSpawnQueue.clear();
+    // 波次越高，敌人数量越多；队列里混入坦克和快速敌人。
+    // Three lanes spawn on the same cadence, with distinct lane identities.
+    const int topLaneCount = 3 + m_wave;
+    const int middleLaneCount = 7 + m_wave * 3;
+    const int bottomLaneCount = 5 + m_wave * 2;
+
+    for (int i = 0; i < topLaneCount; ++i) {
+        if (m_wave >= 6 && i % 8 == 7) {
+            m_topLaneSpawnQueue.append(EnemyType::Priest);
         } else {
-            m_spawnQueue.append(EnemyType::Grunt);
+            m_topLaneSpawnQueue.append((i % 5 == 4) ? EnemyType::Grunt : EnemyType::Tank);
         }
+    }
+    for (int i = 0; i < middleLaneCount; ++i) {
+        if (m_wave >= 4 && i % 9 == 8) {
+            m_middleLaneSpawnQueue.append(EnemyType::Priest);
+        } else if (i % 10 == 9) {
+            m_middleLaneSpawnQueue.append(EnemyType::Tank);
+        } else if (i % 5 == 4) {
+            m_middleLaneSpawnQueue.append(EnemyType::Assassin);
+        } else {
+            m_middleLaneSpawnQueue.append(EnemyType::Grunt);
+        }
+    }
+    for (int i = 0; i < bottomLaneCount; ++i) {
+        if (m_wave >= 8 && i % 10 == 9) {
+            m_bottomLaneSpawnQueue.append(EnemyType::Priest);
+        } else {
+            m_bottomLaneSpawnQueue.append((i % 6 == 5) ? EnemyType::Grunt : EnemyType::Assassin);
+        }
+    }
+    if (m_wave % 5 == 0) {
+        m_middleLaneSpawnQueue.prepend(EnemyType::Boss);
     }
     m_spawnClock = 0.0;
     emit statsChanged(m_gold, m_lives, m_wave, m_maxWaves);
@@ -117,6 +187,7 @@ void GameScene::startNextWave()
 
 void GameScene::resetGame()
 {
+    // 重开时删除所有场景对象，并把资源和波次恢复到初始状态。
     for (Projectile *projectile : std::as_const(m_projectiles)) {
         removeItem(projectile);
         delete projectile;
@@ -142,9 +213,17 @@ void GameScene::resetGame()
     m_gold = 1000;
     m_lives = 12;
     m_wave = 0;
-    m_spawnQueue.clear();
+    m_topLaneSpawnQueue.clear();
+    m_middleLaneSpawnQueue.clear();
+    m_bottomLaneSpawnQueue.clear();
     m_spawnedThisWave = 0;
+    m_killCount = 0;
+    m_leakedCount = 0;
+    m_skillUseCount = 0;
+    m_highestTowerLevel = 0;
+    m_completedWaves = 0;
     m_spawnClock = 0.0;
+    m_crystalShieldActive = false;
     m_gameOver = false;
     if (!m_timer.isActive()) {
         m_timer.start(30);
@@ -166,6 +245,9 @@ void GameScene::setSelectedTowerType(TowerType type)
 
 void GameScene::freezeAllEnemies()
 {
+    if (!m_gameOver) {
+        ++m_skillUseCount;
+    }
     for (Enemy *enemy : std::as_const(m_enemies)) {
         if (enemy && !enemy->isDead() && !enemy->reachedEnd()) {
             enemy->freezeFor(750);
@@ -175,6 +257,9 @@ void GameScene::freezeAllEnemies()
 
 void GameScene::shieldAllEnemies()
 {
+    if (!m_gameOver) {
+        ++m_skillUseCount;
+    }
     for (Enemy *enemy : std::as_const(m_enemies)) {
         if (enemy && !enemy->isDead() && !enemy->reachedEnd()) {
             enemy->shieldFor(1500);
@@ -184,11 +269,70 @@ void GameScene::shieldAllEnemies()
 
 void GameScene::speedBoostAllEnemies()
 {
+    if (!m_gameOver) {
+        ++m_skillUseCount;
+    }
     for (Enemy *enemy : std::as_const(m_enemies)) {
         if (enemy && !enemy->isDead() && !enemy->reachedEnd()) {
             enemy->speedBoostFor(2500, 1.6);
         }
     }
+}
+
+void GameScene::activateCrystalShield()
+{
+    if (m_gameOver) {
+        return;
+    }
+
+    ++m_skillUseCount;
+    m_crystalShieldActive = true;
+    emit messageChanged(QStringLiteral("水晶护盾已启动，5 秒内不会掉血。"));
+    QTimer::singleShot(5000, this, [this]() {
+        m_crystalShieldActive = false;
+        if (!m_gameOver) {
+            emit messageChanged(QStringLiteral("水晶护盾结束。"));
+        }
+    });
+}
+
+void GameScene::activateCrystalShockwave()
+{
+    if (m_gameOver) {
+        return;
+    }
+
+    ++m_skillUseCount;
+    constexpr qreal shockwaveRadius = 180.0;
+    int removedCount = 0;
+    for (int i = m_enemies.size() - 1; i >= 0; --i) {
+        Enemy *enemy = m_enemies.at(i);
+        if (!enemy || enemy->isDead() || enemy->reachedEnd()) {
+            continue;
+        }
+        if (QLineF(playerBasePoint, enemy->pos()).length() <= shockwaveRadius) {
+            removeEnemyAt(i);
+            ++m_killCount;
+            ++removedCount;
+        }
+    }
+
+    emit messageChanged(QStringLiteral("水晶冲击波清除了 %1 个近身敌人。").arg(removedCount));
+}
+
+void GameScene::activateTimeFreeze()
+{
+    if (m_gameOver) {
+        return;
+    }
+
+    ++m_skillUseCount;
+    for (Enemy *enemy : std::as_const(m_enemies)) {
+        if (enemy && !enemy->isDead() && !enemy->reachedEnd()) {
+            enemy->freezeFor(1000);
+        }
+    }
+    emit messageChanged(QStringLiteral("时间冻结，所有敌人停止移动 1 秒。"));
 }
 
 void GameScene::triggerCrystalExplosionFailure()
@@ -214,8 +358,19 @@ void GameScene::drawBackground(QPainter *painter, const QRectF &)
 
 void GameScene::drawForeground(QPainter *painter, const QRectF &)
 {
+    // 前景层负责显示可建塔点和当前选择炮塔的造价。
     painter->setRenderHint(QPainter::Antialiasing, true);
     const int cost = Tower::buildCost(m_selectedTowerType);
+
+    painter->setPen(QPen(QColor(73, 126, 174, 130), 2, Qt::DashLine));
+    painter->setBrush(QColor(78, 145, 196, 45));
+    painter->drawPath(m_riverArea);
+    painter->setPen(QPen(QColor(61, 132, 73, 135), 2, Qt::DashLine));
+    painter->setBrush(QColor(80, 154, 84, 42));
+    painter->drawPath(m_bushArea);
+    painter->setPen(QPen(QColor(176, 136, 62, 135), 2, Qt::DashLine));
+    painter->setBrush(QColor(225, 185, 91, 42));
+    painter->drawPath(m_highlandArea);
 
     for (const BuildSpot &spot : m_buildSpots) {
         if (spot.tower) {
@@ -238,6 +393,7 @@ void GameScene::mousePressEvent(QGraphicsSceneMouseEvent *event)
 {
     qDebug() << "Clicked scene position:" << event->scenePos();
 
+    // 鼠标左键点击炮塔时尝试升级；点击空建塔点时尝试建塔。
     if (m_gameOver || event->button() != Qt::LeftButton) {
         QGraphicsScene::mousePressEvent(event);
         return;
@@ -246,6 +402,10 @@ void GameScene::mousePressEvent(QGraphicsSceneMouseEvent *event)
     QGraphicsItem *clicked = itemAt(event->scenePos(), QTransform());
     if (auto *tower = dynamic_cast<Tower *>(clicked)) {
         if (!tower->canUpgrade()) {
+            emit messageChanged(QString::fromUtf8("\xE5\xB7\xB2\xE6\xBB\xA1\xE7\xBA\xA7"));
+            return;
+            emit messageChanged(QStringLiteral("已满级"));
+            return;
             emit messageChanged(QStringLiteral("%1 已达到最高等级。").arg(Tower::typeName(tower->towerType())));
             return;
         }
@@ -256,8 +416,17 @@ void GameScene::mousePressEvent(QGraphicsSceneMouseEvent *event)
             return;
         }
 
+        TowerBranch branch = TowerBranch::None;
+        if (tower->needsBranchChoice()) {
+            branch = chooseUpgradeBranch(tower);
+            if (branch == TowerBranch::None) {
+                return;
+            }
+        }
+
         m_gold -= cost;
-        tower->upgrade();
+        tower->upgrade(branch);
+        m_highestTowerLevel = qMax(m_highestTowerLevel, tower->level());
         emit statsChanged(m_gold, m_lives, m_wave, m_maxWaves);
         emit messageChanged(QStringLiteral("%1 升至 %2 级。")
                                 .arg(Tower::typeName(tower->towerType()))
@@ -286,6 +455,7 @@ void GameScene::mousePressEvent(QGraphicsSceneMouseEvent *event)
     spot.tower = tower;
     m_towers.append(tower);
     addItem(tower);
+    m_highestTowerLevel = qMax(m_highestTowerLevel, tower->level());
     m_gold -= cost;
 
     update();
@@ -295,6 +465,7 @@ void GameScene::mousePressEvent(QGraphicsSceneMouseEvent *event)
 
 void GameScene::setupMap()
 {
+    // 地图坐标都基于背景图像素位置：出生点、基地、三条路线和建塔点。
     enemySpawnPoint = QPointF(1195, 260);
     playerBasePoint = QPointF(270, 880);
 
@@ -331,6 +502,19 @@ void GameScene::setupMap()
         playerBasePoint
     };
 
+    m_riverArea = QPainterPath();
+    m_riverArea.addRect(QRectF(610, 455, 350, 170));
+    m_riverArea.addRect(QRectF(1120, 520, 160, 230));
+
+    m_bushArea = QPainterPath();
+    m_bushArea.addRect(QRectF(835, 120, 285, 155));
+    m_bushArea.addRect(QRectF(1010, 790, 280, 145));
+
+    m_highlandArea = QPainterPath();
+    m_highlandArea.addRect(QRectF(430, 105, 230, 145));
+    m_highlandArea.addRect(QRectF(860, 315, 260, 135));
+    m_highlandArea.addRect(QRectF(455, 850, 250, 130));
+
     m_buildSpots = {
         {QPointF(227, 388), nullptr},
         {QPointF(229, 656), nullptr},
@@ -356,6 +540,7 @@ void GameScene::setupMap()
 
 void GameScene::loadBackground()
 {
+    // 背景通过 resources.qrc 注册为 Qt 资源，路径以 :/assets 开头。
     const QPixmap bg(QStringLiteral(":/assets/valley_map.png"));
     if (bg.isNull()) {
         qDebug() << "Failed to load background image from Qt resource:"
@@ -376,19 +561,27 @@ void GameScene::gameLoop()
         return;
     }
 
+    // 这里假设定时器每 30ms 触发一次，所以 dt 固定为 0.030 秒。
     constexpr qreal dt = 0.030;
 
-    if (!m_spawnQueue.isEmpty()) {
+    // 按间隔从刷怪队列中生成敌人。
+    if (!m_topLaneSpawnQueue.isEmpty() || !m_middleLaneSpawnQueue.isEmpty() || !m_bottomLaneSpawnQueue.isEmpty()) {
         m_spawnClock -= dt;
         if (m_spawnClock <= 0.0) {
-            spawnEnemy();
+            spawnEnemies();
             m_spawnClock = qMax<qreal>(0.35, 0.82 - m_wave * 0.04);
         }
     }
 
     for (Enemy *enemy : std::as_const(m_enemies)) {
+        if (enemy) {
+            enemy->updateTerrainState(m_riverArea.contains(enemy->pos()),
+                                      m_bushArea.contains(enemy->pos()));
+        }
         enemy->updateObject(dt);
     }
+
+    handleSpecialEnemies();
 
     for (Tower *tower : std::as_const(m_towers)) {
         tower->updateTower(this, dt);
@@ -398,6 +591,7 @@ void GameScene::gameLoop()
         projectile->updateObject(dt);
     }
 
+    // 从后往前删除已完成子弹和死亡/到达终点的敌人，避免索引错位。
     bool statsDirty = false;
     for (int i = m_projectiles.size() - 1; i >= 0; --i) {
         if (m_projectiles.at(i)->isFinished()) {
@@ -409,11 +603,15 @@ void GameScene::gameLoop()
         Enemy *enemy = m_enemies.at(i);
         if (enemy->isDead()) {
             m_gold += enemy->reward();
+            ++m_killCount;
             removeEnemyAt(i);
             statsDirty = true;
         } else if (enemy->reachedEnd()) {
-            m_lives -= enemy->baseDamage();
-            playBaseHitEffect();
+            ++m_leakedCount;
+            if (!m_crystalShieldActive) {
+                m_lives -= enemy->baseDamage();
+                playBaseHitEffect();
+            }
             removeEnemyAt(i);
             statsDirty = true;
         }
@@ -428,41 +626,100 @@ void GameScene::gameLoop()
         return;
     }
 
+    if (!hasActiveWave()) {
+        m_completedWaves = qMax(m_completedWaves, m_wave);
+    }
+
     if (m_wave >= m_maxWaves && !hasActiveWave()) {
         finishGame(true, QStringLiteral("所有波次已清空，峡谷守卫成功！"));
     }
 }
 
-void GameScene::spawnEnemy()
+void GameScene::spawnEnemies()
 {
-    if (m_spawnQueue.isEmpty()) {
+    auto spawnFromLane = [this](QList<EnemyType> &queue, const QVector<QPointF> &path) {
+        if (queue.isEmpty()) {
+            return;
+        }
+
+        const EnemyType type = queue.takeFirst();
+        auto *enemy = new Enemy(type, path, m_wave);
+        enemy->setPos(enemySpawnPoint);
+        enemy->setPath(path);
+        if (type == EnemyType::Boss && m_wave == 10) {
+            enemy->shieldFor(6500);
+        }
+        m_enemies.append(enemy);
+        addItem(enemy);
+        ++m_spawnedThisWave;
+    };
+
+    spawnFromLane(m_topLaneSpawnQueue, topLanePath);
+    spawnFromLane(m_middleLaneSpawnQueue, middleLanePath);
+    spawnFromLane(m_bottomLaneSpawnQueue, bottomLanePath);
+    // 按生成顺序和当前波次轮流选择上、中、下三条路线。
+}
+
+void GameScene::handleSpecialEnemies()
+{
+    QList<Enemy *> bossesToSummon;
+    for (Enemy *enemy : std::as_const(m_enemies)) {
+        if (!enemy || enemy->isDead() || enemy->reachedEnd() || !enemy->specialReady()) {
+            continue;
+        }
+
+        if (enemy->enemyType() == EnemyType::Priest) {
+            constexpr qreal priestRadius = 130.0;
+            int affectedCount = 0;
+            for (Enemy *ally : std::as_const(m_enemies)) {
+                if (!ally || ally == enemy || ally->isDead() || ally->reachedEnd()) {
+                    continue;
+                }
+                if (QLineF(enemy->pos(), ally->pos()).length() > priestRadius) {
+                    continue;
+                }
+
+                if (ally->hpRatio() < 0.85) {
+                    ally->heal(45 + m_wave * 8);
+                } else {
+                    ally->shieldFor(900);
+                }
+                ++affectedCount;
+            }
+            enemy->resetSpecialCooldown(3.4);
+            if (affectedCount > 0) {
+                enemy->shieldFor(450);
+            }
+        } else if (enemy->enemyType() == EnemyType::Boss && m_wave == 15) {
+            bossesToSummon.append(enemy);
+            enemy->resetSpecialCooldown(5.5);
+        }
+    }
+
+    for (Enemy *boss : std::as_const(bossesToSummon)) {
+        spawnSummonedEnemy(boss);
+        spawnSummonedEnemy(boss);
+    }
+}
+
+void GameScene::spawnSummonedEnemy(Enemy *boss)
+{
+    if (!boss) {
         return;
     }
-    const EnemyType type = m_spawnQueue.takeFirst();
 
-    QVector<QPointF> selectedPath;
-    switch ((m_spawnedThisWave + m_wave) % 3) {
-    case 0:
-        selectedPath = topLanePath;
-        break;
-    case 1:
-        selectedPath = middleLanePath;
-        break;
-    default:
-        selectedPath = bottomLanePath;
-        break;
-    }
-
-    auto *enemy = new Enemy(type, selectedPath, m_wave);
-    enemy->setPos(enemySpawnPoint);
-    enemy->setPath(selectedPath);
-    m_enemies.append(enemy);
-    addItem(enemy);
+    auto *minion = new Enemy(EnemyType::Grunt, middleLanePath, m_wave);
+    minion->setPath(middleLanePath);
+    minion->setWaypointIndex(boss->waypointIndex());
+    minion->setPos(boss->pos() + QPointF(18.0 - 36.0 * (m_spawnedThisWave % 2), 20.0));
+    m_enemies.append(minion);
+    addItem(minion);
     ++m_spawnedThisWave;
 }
 
 void GameScene::playBaseHitEffect()
 {
+    // 敌人到达基地时，在基地位置播放一次视频特效。
     constexpr qreal effectSize = 118.0;
     auto *effectItem = new QGraphicsVideoItem;
     effectItem->setSize(QSizeF(effectSize, effectSize));
@@ -514,16 +771,75 @@ void GameScene::finishGame(bool victory, const QString &message)
         return;
     }
 
+    // 停止刷怪和主循环，再通过信号通知主窗口播放结算表现。
     m_gameOver = true;
-    m_spawnQueue.clear();
+    m_topLaneSpawnQueue.clear();
+    m_middleLaneSpawnQueue.clear();
+    m_bottomLaneSpawnQueue.clear();
     m_timer.stop();
     emit statsChanged(m_gold, qMax(0, m_lives), m_wave, m_maxWaves);
     emit messageChanged(message);
     emit gameFinished(victory, message);
 }
 
+TowerBranch GameScene::chooseUpgradeBranch(Tower *tower) const
+{
+    if (!tower) {
+        return TowerBranch::None;
+    }
+
+    TowerBranch firstBranch = TowerBranch::None;
+    TowerBranch secondBranch = TowerBranch::None;
+    QString firstText;
+    QString secondText;
+    QString detailText;
+
+    switch (tower->towerType()) {
+    case TowerType::Archer:
+        firstBranch = TowerBranch::ArcherSpeed;
+        secondBranch = TowerBranch::ArcherCritical;
+        firstText = QStringLiteral("攻速路线");
+        secondText = QStringLiteral("暴击路线");
+        detailText = QStringLiteral("射手塔选择分支强化");
+        break;
+    case TowerType::Mage:
+        firstBranch = TowerBranch::MageExplosion;
+        secondBranch = TowerBranch::MageBurn;
+        firstText = QStringLiteral("爆炸路线");
+        secondText = QStringLiteral("灼烧路线");
+        detailText = QStringLiteral("法师塔选择分支强化");
+        break;
+    case TowerType::Support:
+        firstBranch = TowerBranch::SupportSlow;
+        secondBranch = TowerBranch::SupportVulnerability;
+        firstText = QStringLiteral("减速路线");
+        secondText = QStringLiteral("增伤路线");
+        detailText = QStringLiteral("辅助塔选择分支强化");
+        break;
+    }
+
+    QWidget *parentWidget = views().isEmpty() ? nullptr : views().first();
+    QMessageBox box(parentWidget);
+    box.setWindowTitle(QStringLiteral("分支强化"));
+    box.setText(detailText);
+    box.setInformativeText(QStringLiteral("选择后该塔会沿此路线升到 5 级。"));
+    QPushButton *firstButton = box.addButton(firstText, QMessageBox::AcceptRole);
+    QPushButton *secondButton = box.addButton(secondText, QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.exec();
+
+    if (box.clickedButton() == firstButton) {
+        return firstBranch;
+    }
+    if (box.clickedButton() == secondButton) {
+        return secondBranch;
+    }
+    return TowerBranch::None;
+}
+
 int GameScene::findBuildSpot(const QPointF &point) const
 {
+    // 鼠标点击离建塔点足够近时，认为选中了该建塔点。
     for (int i = 0; i < m_buildSpots.size(); ++i) {
         if (QLineF(point, m_buildSpots.at(i).position).length() <= 26.0) {
             return i;
@@ -534,7 +850,11 @@ int GameScene::findBuildSpot(const QPointF &point) const
 
 bool GameScene::hasActiveWave() const
 {
-    return !m_spawnQueue.isEmpty() || !m_enemies.isEmpty() || !m_projectiles.isEmpty();
+    return !m_topLaneSpawnQueue.isEmpty()
+           || !m_middleLaneSpawnQueue.isEmpty()
+           || !m_bottomLaneSpawnQueue.isEmpty()
+           || !m_enemies.isEmpty()
+           || !m_projectiles.isEmpty();
 }
 
 QColor GameScene::projectileColor(TowerType type) const

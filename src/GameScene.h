@@ -4,18 +4,21 @@
 #include "Tower.h"
 
 #include <QGraphicsScene>
+#include <QPainterPath>
 #include <QTimer>
 #include <QVector>
 
 class QGraphicsPixmapItem;
 class Projectile;
 
+// 可建塔位置：position 是地图坐标，tower 为空表示还没建塔。
 struct BuildSpot
 {
     QPointF position;
     Tower *tower = nullptr;
 };
 
+// GameScene 是游戏核心：管理地图、敌人、炮塔、子弹、波次和胜负判定。
 class GameScene : public QGraphicsScene
 {
     Q_OBJECT
@@ -30,6 +33,12 @@ public:
     int lives() const;
     int wave() const;
     int maxWaves() const;
+    int killCount() const;
+    int leakedCount() const;
+    int skillUseCount() const;
+    int highestTowerLevel() const;
+    int completedWaveCount() const;
+    qreal towerRangeBonusAt(const QPointF &position) const;
 
 public slots:
     void startNextWave();
@@ -38,6 +47,9 @@ public slots:
     void freezeAllEnemies();
     void shieldAllEnemies();
     void speedBoostAllEnemies();
+    void activateCrystalShield();
+    void activateCrystalShockwave();
+    void activateTimeFreeze();
     void triggerCrystalExplosionFailure();
 
 signals:
@@ -51,37 +63,60 @@ protected:
     void mousePressEvent(QGraphicsSceneMouseEvent *event) override;
 
 private:
+    // 初始化地图路径和建塔点。
     void setupMap();
     void loadBackground();
+
+    // 主循环相关函数。
     void gameLoop();
-    void spawnEnemy();
+    void spawnEnemies();
+    void handleSpecialEnemies();
+    void spawnSummonedEnemy(Enemy *boss);
     void playBaseHitEffect();
     void removeEnemyAt(int index);
     void removeProjectileAt(int index);
     void finishGame(bool victory, const QString &message);
+    TowerBranch chooseUpgradeBranch(Tower *tower) const;
     int findBuildSpot(const QPointF &point) const;
     bool hasActiveWave() const;
     QColor projectileColor(TowerType type) const;
 
+    // 定时器驱动 gameLoop，每 30ms 更新一次游戏状态。
     QTimer m_timer;
     QGraphicsPixmapItem *m_backgroundItem = nullptr;
+
+    // 地图关键点和三条敌人行进路径。
     QPointF enemySpawnPoint;
     QPointF playerBasePoint;
     QVector<QPointF> topLanePath;
     QVector<QPointF> middleLanePath;
     QVector<QPointF> bottomLanePath;
+    QPainterPath m_riverArea;
+    QPainterPath m_bushArea;
+    QPainterPath m_highlandArea;
     QVector<BuildSpot> m_buildSpots;
+
+    // 当前场景里的活动对象。
     QList<Enemy *> m_enemies;
     QList<Tower *> m_towers;
     QList<Projectile *> m_projectiles;
-    QList<EnemyType> m_spawnQueue;
+    QList<EnemyType> m_topLaneSpawnQueue;
+    QList<EnemyType> m_middleLaneSpawnQueue;
+    QList<EnemyType> m_bottomLaneSpawnQueue;
 
+    // 游戏状态和资源。
     TowerType m_selectedTowerType = TowerType::Archer;
     int m_gold = 1000;
     int m_lives = 12;
     int m_wave = 0;
     int m_maxWaves = 20;
     int m_spawnedThisWave = 0;
+    int m_killCount = 0;
+    int m_leakedCount = 0;
+    int m_skillUseCount = 0;
+    int m_highestTowerLevel = 0;
+    int m_completedWaves = 0;
     qreal m_spawnClock = 0.0;
+    bool m_crystalShieldActive = false;
     bool m_gameOver = false;
 };

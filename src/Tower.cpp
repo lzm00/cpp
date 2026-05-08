@@ -13,6 +13,7 @@
 
 namespace
 {
+// 根据炮塔类型选择图片素材；图片缺失时，paint() 会画备用图形。
 QPixmap towerIcon(TowerType type)
 {
     QString path;
@@ -30,6 +31,7 @@ QPixmap towerIcon(TowerType type)
     return QPixmap(path);
 }
 
+// 法师攻击时临时创建一个播放器，播放完毕后自动释放。
 void playMageAttackSound()
 {
     auto *player = new QMediaPlayer;
@@ -52,6 +54,7 @@ void playMageAttackSound()
 Tower::Tower(TowerType type, const QPointF &position)
     : m_type(type)
 {
+    // 不同炮塔类型对应不同的初始属性。
     switch (type) {
     case TowerType::Archer:
         m_damage = 22;
@@ -87,6 +90,7 @@ void Tower::paint(QPainter *painter, const QStyleOptionGraphicsItem *, QWidget *
 
     const QPixmap icon = towerIcon(m_type);
     if (!icon.isNull()) {
+        // 优先使用图片素材绘制炮塔，并在右下角显示等级。
         painter->setPen(QPen(QColor(70, 62, 54), 2));
         painter->setBrush(QColor(54, 48, 43, 190));
         painter->drawEllipse(QRectF(-25, -24, 50, 46));
@@ -102,6 +106,7 @@ void Tower::paint(QPainter *painter, const QStyleOptionGraphicsItem *, QWidget *
         return;
     }
 
+    // 图片缺失时，用 QPainter 画出不同类型的备用炮塔外观。
     painter->setPen(QPen(QColor(70, 62, 54), 2));
     painter->setBrush(QColor(92, 83, 71));
     painter->drawRoundedRect(QRectF(-18, -8, 36, 28), 5, 5);
@@ -141,10 +146,21 @@ void Tower::updateObject(qreal dt)
 void Tower::updateTower(GameScene *scene, qreal dt)
 {
     updateObject(dt);
+
+    if (m_branch == TowerBranch::SupportVulnerability && m_vulnerabilityMultiplier > 1.0) {
+        const auto enemies = scene->enemiesInRange(pos(), m_range);
+        for (Enemy *enemy : enemies) {
+            if (enemy && !enemy->isDead()) {
+                enemy->applyVulnerability(m_vulnerabilityMultiplier, m_vulnerabilityDuration);
+            }
+        }
+    }
+
     if (m_cooldownRemaining > 0.0) {
         return;
     }
 
+    // 冷却结束后选择目标，有目标才发射投射物。
     Enemy *target = selectTarget(scene);
     if (!target) {
         return;
@@ -162,16 +178,72 @@ bool Tower::canUpgrade() const
     return m_level < 5;
 }
 
-void Tower::upgrade()
+bool Tower::needsBranchChoice() const
+{
+    return m_level == 3 && m_branch == TowerBranch::None;
+}
+
+void Tower::upgrade(TowerBranch branch)
 {
     if (!canUpgrade()) {
         return;
     }
 
+    if (needsBranchChoice()) {
+        m_branch = branch;
+    }
+
     ++m_level;
-    m_damage = qRound(m_damage * 1.45);
-    m_range += 16.0;
-    m_fireInterval *= 0.86;
+    if (m_level <= 3) {
+        m_damage = qRound(m_damage * 1.35);
+        m_range += 14.0;
+        m_fireInterval *= 0.90;
+    } else {
+        switch (m_branch) {
+        case TowerBranch::ArcherSpeed:
+            m_damage = qRound(m_damage * (m_level == 4 ? 1.15 : 1.20));
+            m_fireInterval *= (m_level == 4 ? 0.58 : 0.50);
+            m_range += 8.0;
+            break;
+        case TowerBranch::ArcherCritical:
+            m_damage = qRound(m_damage * (m_level == 4 ? 1.25 : 1.30));
+            m_critChance = (m_level == 4 ? 0.25 : 0.40);
+            m_critMultiplier = 2.0;
+            m_range += 10.0;
+            break;
+        case TowerBranch::MageExplosion:
+            m_damage = qRound(m_damage * (m_level == 4 ? 1.18 : 1.25));
+            m_explosionRadius = (m_level == 4 ? 78.0 : 104.0);
+            m_explosionDamageRatio = (m_level == 4 ? 0.45 : 0.65);
+            m_range += 12.0;
+            break;
+        case TowerBranch::MageBurn:
+            m_damage = qRound(m_damage * (m_level == 4 ? 1.12 : 1.18));
+            m_burnDamage = qRound(m_damage * (m_level == 4 ? 0.20 : 0.28));
+            m_burnTicks = (m_level == 4 ? 3 : 5);
+            m_burnIntervalMs = 450;
+            m_fireInterval *= 0.92;
+            break;
+        case TowerBranch::SupportSlow:
+            m_damage = qRound(m_damage * 1.12);
+            m_slowMultiplier = (m_level == 4 ? 0.40 : 0.30);
+            m_slowDuration = (m_level == 4 ? 1.95 : 2.55);
+            m_range += 18.0;
+            break;
+        case TowerBranch::SupportVulnerability:
+            m_damage = qRound(m_damage * (m_level == 4 ? 1.20 : 1.25));
+            m_vulnerabilityMultiplier = (m_level == 4 ? 1.22 : 1.38);
+            m_vulnerabilityDuration = 0.20;
+            m_range += 16.0;
+            break;
+        case TowerBranch::None:
+            m_damage = qRound(m_damage * 1.20);
+            m_range += 10.0;
+            break;
+        }
+    }
+    // 升级会提升伤害和射程，并缩短攻击间隔。
+    ++m_level;
     update();
 }
 
@@ -182,7 +254,8 @@ int Tower::level() const
 
 int Tower::upgradeCost() const
 {
-    return (buildCost(m_type) / 2 + 80) * m_level * 3;
+    const int base = buildCost(m_type) / 2 + 120;
+    return base * m_level * (m_level + 1);
 }
 
 TowerType Tower::towerType() const
@@ -203,6 +276,61 @@ qreal Tower::slowMultiplier() const
 qreal Tower::slowDuration() const
 {
     return m_slowDuration;
+}
+
+TowerBranch Tower::branch() const
+{
+    return m_branch;
+}
+
+qreal Tower::range() const
+{
+    return m_range;
+}
+
+qreal Tower::critChance() const
+{
+    return m_critChance;
+}
+
+qreal Tower::critMultiplier() const
+{
+    return m_critMultiplier;
+}
+
+qreal Tower::explosionRadius() const
+{
+    return m_explosionRadius;
+}
+
+qreal Tower::explosionDamageRatio() const
+{
+    return m_explosionDamageRatio;
+}
+
+int Tower::burnDamage() const
+{
+    return m_burnDamage;
+}
+
+int Tower::burnTicks() const
+{
+    return m_burnTicks;
+}
+
+int Tower::burnIntervalMs() const
+{
+    return m_burnIntervalMs;
+}
+
+qreal Tower::vulnerabilityMultiplier() const
+{
+    return m_vulnerabilityMultiplier;
+}
+
+qreal Tower::vulnerabilityDuration() const
+{
+    return m_vulnerabilityDuration;
 }
 
 int Tower::buildCost(TowerType type)
@@ -231,14 +359,36 @@ QString Tower::typeName(TowerType type)
     return QStringLiteral("防御塔");
 }
 
+QString Tower::branchName(TowerBranch branch)
+{
+    switch (branch) {
+    case TowerBranch::ArcherSpeed:
+        return QStringLiteral("攻速路线");
+    case TowerBranch::ArcherCritical:
+        return QStringLiteral("暴击路线");
+    case TowerBranch::MageExplosion:
+        return QStringLiteral("爆炸路线");
+    case TowerBranch::MageBurn:
+        return QStringLiteral("灼烧路线");
+    case TowerBranch::SupportSlow:
+        return QStringLiteral("减速路线");
+    case TowerBranch::SupportVulnerability:
+        return QStringLiteral("增伤路线");
+    case TowerBranch::None:
+        return QStringLiteral("未选择分支");
+    }
+    return QStringLiteral("未选择分支");
+}
+
 Enemy *Tower::selectTarget(GameScene *scene) const
 {
-    const auto enemies = scene->enemiesInRange(pos(), m_range);
+    const auto enemies = scene->enemiesInRange(pos(), m_range + scene->towerRangeBonusAt(pos()));
     Enemy *best = nullptr;
     qreal bestProgress = -1.0;
 
+    // 优先攻击路径进度最大的敌人，也就是更接近基地的敌人。
     for (Enemy *enemy : enemies) {
-        if (!enemy || enemy->isDead()) {
+        if (!enemy || enemy->isDead() || enemy->isHidden()) {
             continue;
         }
         const qreal progress = enemy->pathProgress();
