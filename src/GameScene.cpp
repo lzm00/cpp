@@ -16,6 +16,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QRandomGenerator>
+#include <QSharedPointer>
 #include <QTransform>
 #include <QUrl>
 
@@ -199,6 +200,7 @@ void GameScene::resetGame()
         delete enemy;
     }
     m_enemies.clear();
+    m_mingDaoBlockedEnemies.clear();
 
     for (Tower *tower : std::as_const(m_towers)) {
         removeItem(tower);
@@ -618,12 +620,15 @@ void GameScene::gameLoop()
             removeEnemyAt(i);
             statsDirty = true;
         } else if (enemy->reachedEnd()) {
+            if (m_mingDaoBlockedEnemies.contains(enemy)) {
+                continue;
+            }
+
             ++m_leakedCount;
             if (!m_crystalShieldActive) {
                 if (m_lives <= 1 && m_hasMingDao && !m_mingDaoTriggered) {
-                    removeEnemyAt(i);
                     emit statsChanged(m_gold, qMax(0, m_lives), m_wave, m_maxWaves);
-                    triggerMingDao();
+                    triggerMingDao(enemy);
                     return;
                 }
 
@@ -683,12 +688,13 @@ void GameScene::resumeGame()
     }
 }
 
-void GameScene::triggerMingDao()
+void GameScene::triggerMingDao(Enemy *blockedEnemy)
 {
     m_hasMingDao = false;
     m_mingDaoTriggered = true;
     pauseGame();
     stopBaseHitEffects();
+    markReachedEnemiesBlockedByMingDao(blockedEnemy);
     emit messageChanged(QStringLiteral("名刀司命触发，水晶免疫了这次致命伤害。"));
     playMingDaoSoundAndResume();
 }
@@ -865,25 +871,52 @@ void GameScene::playMingDaoSoundAndResume()
     audioOutput->setVolume(1.0);
     player->setAudioOutput(audioOutput);
     player->setSource(QUrl::fromLocalFile(R"(D:\cpp\picture\23cac5b3ec1ea97dd74467f3b80313a4.mp4)"));
+    auto resumed = QSharedPointer<bool>::create(false);
 
-    connect(player, &QMediaPlayer::mediaStatusChanged, this, [this, player](QMediaPlayer::MediaStatus status) {
-        if (status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia) {
-            player->deleteLater();
-            resumeGame();
+    auto finishMingDaoSound = [this, player, resumed]() {
+        if (*resumed) {
+            return;
         }
-    });
-    connect(player, &QMediaPlayer::errorOccurred, this, [this, player](QMediaPlayer::Error, const QString &errorString) {
-        qDebug() << "Ming Dao sound error:" << errorString;
+        *resumed = true;
         player->deleteLater();
         resumeGame();
+    };
+
+    connect(player, &QMediaPlayer::mediaStatusChanged, this, [finishMingDaoSound](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia) {
+            finishMingDaoSound();
+        }
+    });
+    connect(player, &QMediaPlayer::playbackStateChanged, this, [finishMingDaoSound](QMediaPlayer::PlaybackState state) {
+        if (state == QMediaPlayer::StoppedState) {
+            finishMingDaoSound();
+        }
+    });
+    connect(player, &QMediaPlayer::errorOccurred, this, [finishMingDaoSound](QMediaPlayer::Error, const QString &errorString) {
+        qDebug() << "Ming Dao sound error:" << errorString;
+        finishMingDaoSound();
     });
 
     player->play();
 }
 
+void GameScene::markReachedEnemiesBlockedByMingDao(Enemy *blockedEnemy)
+{
+    if (blockedEnemy) {
+        m_mingDaoBlockedEnemies.insert(blockedEnemy);
+    }
+
+    for (Enemy *enemy : std::as_const(m_enemies)) {
+        if (enemy && enemy->reachedEnd()) {
+            m_mingDaoBlockedEnemies.insert(enemy);
+        }
+    }
+}
+
 void GameScene::removeEnemyAt(int index)
 {
     Enemy *enemy = m_enemies.takeAt(index);
+    m_mingDaoBlockedEnemies.remove(enemy);
     removeItem(enemy);
     delete enemy;
 }
@@ -978,8 +1011,16 @@ int GameScene::findBuildSpot(const QPointF &point) const
 
 bool GameScene::hasActiveWave() const
 {
+    bool hasActiveEnemy = false;
+    for (Enemy *enemy : m_enemies) {
+        if (!m_mingDaoBlockedEnemies.contains(enemy)) {
+            hasActiveEnemy = true;
+            break;
+        }
+    }
+
     return !m_spawnQueue.isEmpty()
-           || !m_enemies.isEmpty()
+           || hasActiveEnemy
            || !m_projectiles.isEmpty();
 }
 

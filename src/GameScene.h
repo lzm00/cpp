@@ -6,6 +6,7 @@
 #include <QGraphicsScene>
 #include <QList>
 #include <QRectF>
+#include <QSet>
 #include <QTimer>
 #include <QVector>
 
@@ -86,11 +87,12 @@ private:
     bool containsAny(const QVector<QRectF> &areas, const QPointF &point) const;
     void pauseGame();
     void resumeGame();
-    void triggerMingDao();
+    void triggerMingDao(Enemy *blockedEnemy);
     void playMingDaoSoundAndResume();
     void playBaseHitEffect();
     void removeBaseHitEffect(QMediaPlayer *player, QGraphicsVideoItem *effectItem);
     void stopBaseHitEffects();
+    void markReachedEnemiesBlockedByMingDao(Enemy *blockedEnemy);
     void removeEnemyAt(int index);
     void removeProjectileAt(int index);
     void finishGame(bool victory, const QString &message);
@@ -119,6 +121,7 @@ private:
     QList<Tower *> m_towers;
     QList<Projectile *> m_projectiles;
     QList<BaseHitEffect> m_baseHitEffects;
+    QSet<Enemy *> m_mingDaoBlockedEnemies;
     QList<EnemyType> m_spawnQueue;
 
     // 游戏状态和资源。
