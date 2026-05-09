@@ -4,12 +4,21 @@
 #include "Tower.h"
 
 #include <QGraphicsScene>
+#include <QList>
 #include <QRectF>
 #include <QTimer>
 #include <QVector>
 
 class QGraphicsPixmapItem;
+class QGraphicsVideoItem;
+class QMediaPlayer;
 class Projectile;
+
+struct BaseHitEffect
+{
+    QMediaPlayer *player = nullptr;
+    QGraphicsVideoItem *item = nullptr;
+};
 
 // 可建塔位置：position 是地图坐标，tower 为空表示还没建塔。
 struct BuildSpot
@@ -78,9 +87,10 @@ private:
     void pauseGame();
     void resumeGame();
     void triggerMingDao();
-    void playMingDaoHitVideo();
     void playMingDaoSoundAndResume();
     void playBaseHitEffect();
+    void removeBaseHitEffect(QMediaPlayer *player, QGraphicsVideoItem *effectItem);
+    void stopBaseHitEffects();
     void removeEnemyAt(int index);
     void removeProjectileAt(int index);
     void finishGame(bool victory, const QString &message);
@@ -108,6 +118,7 @@ private:
     QList<Enemy *> m_enemies;
     QList<Tower *> m_towers;
     QList<Projectile *> m_projectiles;
+    QList<BaseHitEffect> m_baseHitEffects;
     QList<EnemyType> m_spawnQueue;
 
     // 游戏状态和资源。

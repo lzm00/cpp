@@ -186,6 +186,8 @@ void GameScene::startNextWave()
 void GameScene::resetGame()
 {
     // 重开时删除所有场景对象，并把资源和波次恢复到初始状态。
+    stopBaseHitEffects();
+
     for (Projectile *projectile : std::as_const(m_projectiles)) {
         removeItem(projectile);
         delete projectile;
@@ -686,8 +688,9 @@ void GameScene::triggerMingDao()
     m_hasMingDao = false;
     m_mingDaoTriggered = true;
     pauseGame();
+    stopBaseHitEffects();
     emit messageChanged(QStringLiteral("名刀司命触发，水晶免疫了这次致命伤害。"));
-    playMingDaoHitVideo();
+    playMingDaoSoundAndResume();
 }
 
 void GameScene::spawnEnemies()
@@ -805,57 +808,54 @@ void GameScene::playBaseHitEffect()
     player->setVideoOutput(effectItem);
     player->setAudioOutput(audioOutput);
     player->setSource(QUrl::fromLocalFile(R"(D:\cpp\picture\3758bcf24622cb2294090749e90e8c94.mp4)"));
+    m_baseHitEffects.append({player, effectItem});
 
     connect(player, &QMediaPlayer::mediaStatusChanged, this, [this, player, effectItem](QMediaPlayer::MediaStatus status) {
         if (status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia) {
-            removeItem(effectItem);
-            delete effectItem;
-            player->deleteLater();
+            removeBaseHitEffect(player, effectItem);
         }
     });
     connect(player, &QMediaPlayer::errorOccurred, this, [this, player, effectItem](QMediaPlayer::Error, const QString &errorString) {
         qDebug() << "Base hit effect video error:" << errorString;
-        removeItem(effectItem);
-        delete effectItem;
-        player->deleteLater();
+        removeBaseHitEffect(player, effectItem);
     });
 
     player->play();
 }
 
-void GameScene::playMingDaoHitVideo()
+void GameScene::removeBaseHitEffect(QMediaPlayer *player, QGraphicsVideoItem *effectItem)
 {
-    constexpr qreal effectSize = 118.0;
-    auto *effectItem = new QGraphicsVideoItem;
-    effectItem->setSize(QSizeF(effectSize, effectSize));
-    effectItem->setPos(playerBasePoint - QPointF(effectSize / 2.0, effectSize / 2.0));
-    effectItem->setZValue(90);
-    addItem(effectItem);
-
-    auto *player = new QMediaPlayer(this);
-    auto *audioOutput = new QAudioOutput(player);
-    audioOutput->setVolume(1.0);
-    player->setVideoOutput(effectItem);
-    player->setAudioOutput(audioOutput);
-    player->setSource(QUrl::fromLocalFile(R"(D:\cpp\picture\3758bcf24622cb2294090749e90e8c94.mp4)"));
-
-    connect(player, &QMediaPlayer::mediaStatusChanged, this, [this, player, effectItem](QMediaPlayer::MediaStatus status) {
-        if (status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia) {
-            removeItem(effectItem);
-            delete effectItem;
-            player->deleteLater();
-            playMingDaoSoundAndResume();
+    for (int i = m_baseHitEffects.size() - 1; i >= 0; --i) {
+        const BaseHitEffect &effect = m_baseHitEffects.at(i);
+        if (effect.player == player && effect.item == effectItem) {
+            m_baseHitEffects.removeAt(i);
+            break;
         }
-    });
-    connect(player, &QMediaPlayer::errorOccurred, this, [this, player, effectItem](QMediaPlayer::Error, const QString &errorString) {
-        qDebug() << "Ming Dao hit video error:" << errorString;
+    }
+
+    if (effectItem) {
         removeItem(effectItem);
         delete effectItem;
+    }
+    if (player) {
         player->deleteLater();
-        playMingDaoSoundAndResume();
-    });
+    }
+}
 
-    player->play();
+void GameScene::stopBaseHitEffects()
+{
+    while (!m_baseHitEffects.isEmpty()) {
+        const BaseHitEffect effect = m_baseHitEffects.takeLast();
+        if (effect.player) {
+            disconnect(effect.player, nullptr, this, nullptr);
+            effect.player->stop();
+            effect.player->deleteLater();
+        }
+        if (effect.item) {
+            removeItem(effect.item);
+            delete effect.item;
+        }
+    }
 }
 
 void GameScene::playMingDaoSoundAndResume()
