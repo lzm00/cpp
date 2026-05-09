@@ -21,6 +21,9 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private slots:
     void updateStats(int gold, int lives, int wave, int maxWaves);
     void showGameFinished(bool victory, const QString &message);
@@ -38,8 +41,11 @@ private:
     void playResultVideo(bool victory);
     void playStartSound();
     void playBattleSong();
+    void playSecondBattleSong();
     void playFirstToolbarSound();
     void playSecondToolbarSound();
+    void enterGameFromIntro(bool startFirstWave);
+    void updateIntroStartButtonGeometry();
     void startBackgroundMusic();
     void stopBackgroundMusic();
     void showResultButtons();
@@ -54,6 +60,7 @@ private:
     QWidget *m_videoOverlay = nullptr;
     QWidget *m_resultButtonPanel = nullptr;
     QLabel *m_resultStatsLabel = nullptr;
+    QPushButton *m_introStartButton = nullptr;
     QVideoWidget *m_videoWidget = nullptr;
     QMediaPlayer *m_videoPlayer = nullptr;
     QAudioOutput *m_audioOutput = nullptr;
@@ -61,6 +68,8 @@ private:
     QAudioOutput *m_startAudioOutput = nullptr;
     QMediaPlayer *m_battleSongPlayer = nullptr;
     QAudioOutput *m_battleSongAudioOutput = nullptr;
+    QMediaPlayer *m_secondBattleSongPlayer = nullptr;
+    QAudioOutput *m_secondBattleSongAudioOutput = nullptr;
     QMediaPlayer *m_firstToolbarPlayer = nullptr;
     QAudioOutput *m_firstToolbarAudioOutput = nullptr;
     QMediaPlayer *m_secondToolbarPlayer = nullptr;
@@ -78,4 +87,5 @@ private:
     QPushButton *m_mageButton = nullptr;
     QPushButton *m_supportButton = nullptr;
     bool m_resultVideoMode = false;
+    bool m_introVideoMode = false;
 };

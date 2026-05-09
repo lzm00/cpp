@@ -1,4 +1,4 @@
-#include "GameScene.h"
+﻿#include "GameScene.h"
 
 #include "Enemy.h"
 #include "Projectile.h"
@@ -13,9 +13,9 @@
 #include <QMediaPlayer>
 #include <QMessageBox>
 #include <QPainter>
-#include <QPainterPath>
 #include <QPixmap>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QTransform>
 #include <QUrl>
 
@@ -120,7 +120,7 @@ int GameScene::completedWaveCount() const
 
 qreal GameScene::towerRangeBonusAt(const QPointF &position) const
 {
-    return m_highlandArea.contains(position) ? 42.0 : 0.0;
+    return containsAny(m_highlandAreas, position) ? 42.0 : 0.0;
 }
 
 void GameScene::startNextWave()
@@ -143,9 +143,7 @@ void GameScene::startNextWave()
 
     ++m_wave;
     m_spawnedThisWave = 0;
-    m_topLaneSpawnQueue.clear();
-    m_middleLaneSpawnQueue.clear();
-    m_bottomLaneSpawnQueue.clear();
+    m_spawnQueue.clear();
     // 波次越高，敌人数量越多；队列里混入坦克和快速敌人。
     // Three lanes spawn on the same cadence, with distinct lane identities.
     const int topLaneCount = 3 + m_wave;
@@ -154,31 +152,31 @@ void GameScene::startNextWave()
 
     for (int i = 0; i < topLaneCount; ++i) {
         if (m_wave >= 6 && i % 8 == 7) {
-            m_topLaneSpawnQueue.append(EnemyType::Priest);
+            m_spawnQueue.append(EnemyType::Priest);
         } else {
-            m_topLaneSpawnQueue.append((i % 5 == 4) ? EnemyType::Grunt : EnemyType::Tank);
+            m_spawnQueue.append((i % 5 == 4) ? EnemyType::Grunt : EnemyType::Tank);
         }
     }
     for (int i = 0; i < middleLaneCount; ++i) {
         if (m_wave >= 4 && i % 9 == 8) {
-            m_middleLaneSpawnQueue.append(EnemyType::Priest);
+            m_spawnQueue.append(EnemyType::Priest);
         } else if (i % 10 == 9) {
-            m_middleLaneSpawnQueue.append(EnemyType::Tank);
+            m_spawnQueue.append(EnemyType::Tank);
         } else if (i % 5 == 4) {
-            m_middleLaneSpawnQueue.append(EnemyType::Assassin);
+            m_spawnQueue.append(EnemyType::Assassin);
         } else {
-            m_middleLaneSpawnQueue.append(EnemyType::Grunt);
+            m_spawnQueue.append(EnemyType::Grunt);
         }
     }
     for (int i = 0; i < bottomLaneCount; ++i) {
         if (m_wave >= 8 && i % 10 == 9) {
-            m_bottomLaneSpawnQueue.append(EnemyType::Priest);
+            m_spawnQueue.append(EnemyType::Priest);
         } else {
-            m_bottomLaneSpawnQueue.append((i % 6 == 5) ? EnemyType::Grunt : EnemyType::Assassin);
+            m_spawnQueue.append((i % 6 == 5) ? EnemyType::Grunt : EnemyType::Assassin);
         }
     }
     if (m_wave % 5 == 0) {
-        m_middleLaneSpawnQueue.prepend(EnemyType::Boss);
+        m_spawnQueue.prepend(EnemyType::Boss);
     }
     m_spawnClock = 0.0;
     emit statsChanged(m_gold, m_lives, m_wave, m_maxWaves);
@@ -211,11 +209,9 @@ void GameScene::resetGame()
     }
 
     m_gold = 1000;
-    m_lives = 12;
+    m_lives = 10;
     m_wave = 0;
-    m_topLaneSpawnQueue.clear();
-    m_middleLaneSpawnQueue.clear();
-    m_bottomLaneSpawnQueue.clear();
+    m_spawnQueue.clear();
     m_spawnedThisWave = 0;
     m_killCount = 0;
     m_leakedCount = 0;
@@ -224,6 +220,9 @@ void GameScene::resetGame()
     m_completedWaves = 0;
     m_spawnClock = 0.0;
     m_crystalShieldActive = false;
+    m_hasMingDao = false;
+    m_mingDaoTriggered = false;
+    m_gamePaused = false;
     m_gameOver = false;
     if (!m_timer.isActive()) {
         m_timer.start(30);
@@ -335,6 +334,41 @@ void GameScene::activateTimeFreeze()
     emit messageChanged(QStringLiteral("时间冻结，所有敌人停止移动 1 秒。"));
 }
 
+bool GameScene::activateCrystalLifeSaver()
+{
+    if (m_gameOver) {
+        return false;
+    }
+
+    constexpr int lifeSaverCost = 1000;
+    if (m_gamePaused) {
+        emit messageChanged(QStringLiteral("游戏暂停中，暂时不能使用名刀司命。"));
+        return false;
+    }
+
+    if (m_mingDaoTriggered) {
+        emit messageChanged(QStringLiteral("名刀司命本局已经触发过，无法再次生效。"));
+        return false;
+    }
+
+    if (m_hasMingDao) {
+        emit messageChanged(QStringLiteral("名刀司命已生效，触发前不能重复购买。"));
+        return false;
+    }
+
+    if (m_gold < lifeSaverCost) {
+        emit messageChanged(QStringLiteral("金币不足，保命装备需要 %1 金币。").arg(lifeSaverCost));
+        return false;
+    }
+
+    m_gold -= lifeSaverCost;
+    m_hasMingDao = true;
+    ++m_skillUseCount;
+    emit statsChanged(m_gold, m_lives, m_wave, m_maxWaves);
+    emit messageChanged(QStringLiteral("名刀司命已生效：水晶最后 1 点生命时可免疫一次致命伤害。"));
+    return true;
+}
+
 void GameScene::triggerCrystalExplosionFailure()
 {
     if (m_gameOver) {
@@ -358,35 +392,7 @@ void GameScene::drawBackground(QPainter *painter, const QRectF &)
 
 void GameScene::drawForeground(QPainter *painter, const QRectF &)
 {
-    // 前景层负责显示可建塔点和当前选择炮塔的造价。
-    painter->setRenderHint(QPainter::Antialiasing, true);
-    const int cost = Tower::buildCost(m_selectedTowerType);
-
-    painter->setPen(QPen(QColor(73, 126, 174, 130), 2, Qt::DashLine));
-    painter->setBrush(QColor(78, 145, 196, 45));
-    painter->drawPath(m_riverArea);
-    painter->setPen(QPen(QColor(61, 132, 73, 135), 2, Qt::DashLine));
-    painter->setBrush(QColor(80, 154, 84, 42));
-    painter->drawPath(m_bushArea);
-    painter->setPen(QPen(QColor(176, 136, 62, 135), 2, Qt::DashLine));
-    painter->setBrush(QColor(225, 185, 91, 42));
-    painter->drawPath(m_highlandArea);
-
-    for (const BuildSpot &spot : m_buildSpots) {
-        if (spot.tower) {
-            continue;
-        }
-
-        const bool affordable = m_gold >= cost;
-        painter->setPen(QPen(affordable ? QColor(61, 117, 80) : QColor(130, 79, 73), 2, Qt::DashLine));
-        painter->setBrush(affordable ? QColor(238, 246, 222, 170) : QColor(242, 219, 210, 160));
-        painter->drawEllipse(spot.position, 23, 23);
-
-        painter->setPen(QColor(65, 60, 53));
-        painter->drawText(QRectF(spot.position.x() - 22, spot.position.y() - 9, 44, 18),
-                          Qt::AlignCenter,
-                          QString::number(cost));
-    }
+    Q_UNUSED(painter);
 }
 
 void GameScene::mousePressEvent(QGraphicsSceneMouseEvent *event)
@@ -502,18 +508,21 @@ void GameScene::setupMap()
         playerBasePoint
     };
 
-    m_riverArea = QPainterPath();
-    m_riverArea.addRect(QRectF(610, 455, 350, 170));
-    m_riverArea.addRect(QRectF(1120, 520, 160, 230));
+    m_riverAreas = {
+        QRectF(610, 455, 350, 170),
+        QRectF(1120, 520, 160, 230)
+    };
 
-    m_bushArea = QPainterPath();
-    m_bushArea.addRect(QRectF(835, 120, 285, 155));
-    m_bushArea.addRect(QRectF(1010, 790, 280, 145));
+    m_bushAreas = {
+        QRectF(835, 120, 285, 155),
+        QRectF(1010, 790, 280, 145)
+    };
 
-    m_highlandArea = QPainterPath();
-    m_highlandArea.addRect(QRectF(430, 105, 230, 145));
-    m_highlandArea.addRect(QRectF(860, 315, 260, 135));
-    m_highlandArea.addRect(QRectF(455, 850, 250, 130));
+    m_highlandAreas = {
+        QRectF(430, 105, 230, 145),
+        QRectF(860, 315, 260, 135),
+        QRectF(455, 850, 250, 130)
+    };
 
     m_buildSpots = {
         {QPointF(227, 388), nullptr},
@@ -557,7 +566,7 @@ void GameScene::loadBackground()
 
 void GameScene::gameLoop()
 {
-    if (m_gameOver) {
+    if (m_gameOver || m_gamePaused) {
         return;
     }
 
@@ -565,18 +574,18 @@ void GameScene::gameLoop()
     constexpr qreal dt = 0.030;
 
     // 按间隔从刷怪队列中生成敌人。
-    if (!m_topLaneSpawnQueue.isEmpty() || !m_middleLaneSpawnQueue.isEmpty() || !m_bottomLaneSpawnQueue.isEmpty()) {
+    if (!m_spawnQueue.isEmpty()) {
         m_spawnClock -= dt;
         if (m_spawnClock <= 0.0) {
             spawnEnemies();
-            m_spawnClock = qMax<qreal>(0.35, 0.82 - m_wave * 0.04);
+            m_spawnClock = 0.30;
         }
     }
 
     for (Enemy *enemy : std::as_const(m_enemies)) {
         if (enemy) {
-            enemy->updateTerrainState(m_riverArea.contains(enemy->pos()),
-                                      m_bushArea.contains(enemy->pos()));
+            enemy->updateTerrainState(containsAny(m_riverAreas, enemy->pos()),
+                                      containsAny(m_bushAreas, enemy->pos()));
         }
         enemy->updateObject(dt);
     }
@@ -609,6 +618,21 @@ void GameScene::gameLoop()
         } else if (enemy->reachedEnd()) {
             ++m_leakedCount;
             if (!m_crystalShieldActive) {
+                if (m_lives <= 1 && m_hasMingDao && !m_mingDaoTriggered) {
+                    removeEnemyAt(i);
+                    emit statsChanged(m_gold, qMax(0, m_lives), m_wave, m_maxWaves);
+                    triggerMingDao();
+                    return;
+                }
+
+                if (m_lives <= 1 && m_mingDaoTriggered) {
+                    m_lives = 0;
+                    removeEnemyAt(i);
+                    emit statsChanged(m_gold, qMax(0, m_lives), m_wave, m_maxWaves);
+                    finishGame(false, QStringLiteral("名刀司命已失效，基地生命值归零，守卫失败。"));
+                    return;
+                }
+
                 m_lives -= enemy->baseDamage();
                 playBaseHitEffect();
             }
@@ -635,29 +659,76 @@ void GameScene::gameLoop()
     }
 }
 
+void GameScene::pauseGame()
+{
+    if (m_gameOver || m_gamePaused) {
+        return;
+    }
+
+    m_gamePaused = true;
+    m_timer.stop();
+}
+
+void GameScene::resumeGame()
+{
+    if (m_gameOver || !m_gamePaused) {
+        return;
+    }
+
+    m_gamePaused = false;
+    if (!m_timer.isActive()) {
+        m_timer.start(30);
+    }
+}
+
+void GameScene::triggerMingDao()
+{
+    m_hasMingDao = false;
+    m_mingDaoTriggered = true;
+    pauseGame();
+    emit messageChanged(QStringLiteral("名刀司命触发，水晶免疫了这次致命伤害。"));
+    playMingDaoHitVideo();
+}
+
 void GameScene::spawnEnemies()
 {
-    auto spawnFromLane = [this](QList<EnemyType> &queue, const QVector<QPointF> &path) {
-        if (queue.isEmpty()) {
-            return;
-        }
+    if (m_spawnQueue.isEmpty()) {
+        return;
+    }
 
-        const EnemyType type = queue.takeFirst();
-        auto *enemy = new Enemy(type, path, m_wave);
-        enemy->setPos(enemySpawnPoint);
-        enemy->setPath(path);
-        if (type == EnemyType::Boss && m_wave == 10) {
-            enemy->shieldFor(6500);
-        }
-        m_enemies.append(enemy);
-        addItem(enemy);
-        ++m_spawnedThisWave;
-    };
+    const EnemyType type = m_spawnQueue.takeFirst();
+    const QVector<QPointF> &path = randomLanePath();
+    auto *enemy = new Enemy(type, path, m_wave);
+    enemy->setPos(enemySpawnPoint);
+    enemy->setPath(path);
+    if (type == EnemyType::Boss && m_wave == 10) {
+        enemy->shieldFor(6500);
+    }
+    m_enemies.append(enemy);
+    addItem(enemy);
+    ++m_spawnedThisWave;
+}
 
-    spawnFromLane(m_topLaneSpawnQueue, topLanePath);
-    spawnFromLane(m_middleLaneSpawnQueue, middleLanePath);
-    spawnFromLane(m_bottomLaneSpawnQueue, bottomLanePath);
-    // 按生成顺序和当前波次轮流选择上、中、下三条路线。
+const QVector<QPointF> &GameScene::randomLanePath() const
+{
+    const int lane = QRandomGenerator::global()->bounded(3);
+    if (lane == 0) {
+        return topLanePath;
+    }
+    if (lane == 1) {
+        return middleLanePath;
+    }
+    return bottomLanePath;
+}
+
+bool GameScene::containsAny(const QVector<QRectF> &areas, const QPointF &point) const
+{
+    for (const QRectF &area : areas) {
+        if (area.contains(point)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void GameScene::handleSpecialEnemies()
@@ -708,8 +779,9 @@ void GameScene::spawnSummonedEnemy(Enemy *boss)
         return;
     }
 
-    auto *minion = new Enemy(EnemyType::Grunt, middleLanePath, m_wave);
-    minion->setPath(middleLanePath);
+    const QVector<QPointF> &path = randomLanePath();
+    auto *minion = new Enemy(EnemyType::Grunt, path, m_wave);
+    minion->setPath(path);
     minion->setWaypointIndex(boss->waypointIndex());
     minion->setPos(boss->pos() + QPointF(18.0 - 36.0 * (m_spawnedThisWave % 2), 20.0));
     m_enemies.append(minion);
@@ -751,6 +823,64 @@ void GameScene::playBaseHitEffect()
     player->play();
 }
 
+void GameScene::playMingDaoHitVideo()
+{
+    constexpr qreal effectSize = 118.0;
+    auto *effectItem = new QGraphicsVideoItem;
+    effectItem->setSize(QSizeF(effectSize, effectSize));
+    effectItem->setPos(playerBasePoint - QPointF(effectSize / 2.0, effectSize / 2.0));
+    effectItem->setZValue(90);
+    addItem(effectItem);
+
+    auto *player = new QMediaPlayer(this);
+    auto *audioOutput = new QAudioOutput(player);
+    audioOutput->setVolume(1.0);
+    player->setVideoOutput(effectItem);
+    player->setAudioOutput(audioOutput);
+    player->setSource(QUrl::fromLocalFile(R"(D:\cpp\picture\3758bcf24622cb2294090749e90e8c94.mp4)"));
+
+    connect(player, &QMediaPlayer::mediaStatusChanged, this, [this, player, effectItem](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia) {
+            removeItem(effectItem);
+            delete effectItem;
+            player->deleteLater();
+            playMingDaoSoundAndResume();
+        }
+    });
+    connect(player, &QMediaPlayer::errorOccurred, this, [this, player, effectItem](QMediaPlayer::Error, const QString &errorString) {
+        qDebug() << "Ming Dao hit video error:" << errorString;
+        removeItem(effectItem);
+        delete effectItem;
+        player->deleteLater();
+        playMingDaoSoundAndResume();
+    });
+
+    player->play();
+}
+
+void GameScene::playMingDaoSoundAndResume()
+{
+    auto *player = new QMediaPlayer(this);
+    auto *audioOutput = new QAudioOutput(player);
+    audioOutput->setVolume(1.0);
+    player->setAudioOutput(audioOutput);
+    player->setSource(QUrl::fromLocalFile(R"(D:\cpp\picture\23cac5b3ec1ea97dd74467f3b80313a4.mp4)"));
+
+    connect(player, &QMediaPlayer::mediaStatusChanged, this, [this, player](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia) {
+            player->deleteLater();
+            resumeGame();
+        }
+    });
+    connect(player, &QMediaPlayer::errorOccurred, this, [this, player](QMediaPlayer::Error, const QString &errorString) {
+        qDebug() << "Ming Dao sound error:" << errorString;
+        player->deleteLater();
+        resumeGame();
+    });
+
+    player->play();
+}
+
 void GameScene::removeEnemyAt(int index)
 {
     Enemy *enemy = m_enemies.takeAt(index);
@@ -773,9 +903,7 @@ void GameScene::finishGame(bool victory, const QString &message)
 
     // 停止刷怪和主循环，再通过信号通知主窗口播放结算表现。
     m_gameOver = true;
-    m_topLaneSpawnQueue.clear();
-    m_middleLaneSpawnQueue.clear();
-    m_bottomLaneSpawnQueue.clear();
+    m_spawnQueue.clear();
     m_timer.stop();
     emit statsChanged(m_gold, qMax(0, m_lives), m_wave, m_maxWaves);
     emit messageChanged(message);
@@ -850,9 +978,7 @@ int GameScene::findBuildSpot(const QPointF &point) const
 
 bool GameScene::hasActiveWave() const
 {
-    return !m_topLaneSpawnQueue.isEmpty()
-           || !m_middleLaneSpawnQueue.isEmpty()
-           || !m_bottomLaneSpawnQueue.isEmpty()
+    return !m_spawnQueue.isEmpty()
            || !m_enemies.isEmpty()
            || !m_projectiles.isEmpty();
 }

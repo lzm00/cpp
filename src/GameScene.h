@@ -1,10 +1,10 @@
-#pragma once
+﻿#pragma once
 
 #include "Enemy.h"
 #include "Tower.h"
 
 #include <QGraphicsScene>
-#include <QPainterPath>
+#include <QRectF>
 #include <QTimer>
 #include <QVector>
 
@@ -51,6 +51,7 @@ public slots:
     void activateCrystalShockwave();
     void activateTimeFreeze();
     void triggerCrystalExplosionFailure();
+    bool activateCrystalLifeSaver();
 
 signals:
     void statsChanged(int gold, int lives, int wave, int maxWaves);
@@ -72,6 +73,13 @@ private:
     void spawnEnemies();
     void handleSpecialEnemies();
     void spawnSummonedEnemy(Enemy *boss);
+    const QVector<QPointF> &randomLanePath() const;
+    bool containsAny(const QVector<QRectF> &areas, const QPointF &point) const;
+    void pauseGame();
+    void resumeGame();
+    void triggerMingDao();
+    void playMingDaoHitVideo();
+    void playMingDaoSoundAndResume();
     void playBaseHitEffect();
     void removeEnemyAt(int index);
     void removeProjectileAt(int index);
@@ -91,25 +99,23 @@ private:
     QVector<QPointF> topLanePath;
     QVector<QPointF> middleLanePath;
     QVector<QPointF> bottomLanePath;
-    QPainterPath m_riverArea;
-    QPainterPath m_bushArea;
-    QPainterPath m_highlandArea;
+    QVector<QRectF> m_riverAreas;
+    QVector<QRectF> m_bushAreas;
+    QVector<QRectF> m_highlandAreas;
     QVector<BuildSpot> m_buildSpots;
 
     // 当前场景里的活动对象。
     QList<Enemy *> m_enemies;
     QList<Tower *> m_towers;
     QList<Projectile *> m_projectiles;
-    QList<EnemyType> m_topLaneSpawnQueue;
-    QList<EnemyType> m_middleLaneSpawnQueue;
-    QList<EnemyType> m_bottomLaneSpawnQueue;
+    QList<EnemyType> m_spawnQueue;
 
     // 游戏状态和资源。
     TowerType m_selectedTowerType = TowerType::Archer;
     int m_gold = 1000;
-    int m_lives = 12;
+    int m_lives = 10;
     int m_wave = 0;
-    int m_maxWaves = 20;
+    int m_maxWaves = 10;
     int m_spawnedThisWave = 0;
     int m_killCount = 0;
     int m_leakedCount = 0;
@@ -118,5 +124,8 @@ private:
     int m_completedWaves = 0;
     qreal m_spawnClock = 0.0;
     bool m_crystalShieldActive = false;
+    bool m_hasMingDao = false;
+    bool m_mingDaoTriggered = false;
+    bool m_gamePaused = false;
     bool m_gameOver = false;
 };

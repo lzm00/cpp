@@ -1,4 +1,4 @@
-#include "Enemy.h"
+﻿#include "Enemy.h"
 
 #include <QLineF>
 #include <QPainter>
@@ -11,13 +11,17 @@ namespace
 // 根据敌人类型选择图片素材；找不到图片时，paint() 会画备用图形。
 QPixmap enemyIcon(EnemyType type)
 {
+    static const QPixmap assassinIcon(QStringLiteral("D:/cpp/picture/8ef82fc0cb7123709b104be3c35f44b3.jpg"));
+    static const QPixmap tankIcon(QStringLiteral("D:/cpp/picture/a84d2ae14aa405704cec3430c6689715.png"));
+    static const QPixmap gruntIcon(QStringLiteral("D:/cpp/picture/a1036be708507b658f671266f2497722.png"));
+
     switch (type) {
     case EnemyType::Assassin:
-        return QPixmap(QStringLiteral("D:/cpp/picture/8ef82fc0cb7123709b104be3c35f44b3.jpg"));
+        return assassinIcon;
     case EnemyType::Tank:
-        return QPixmap(QStringLiteral("D:/cpp/picture/a84d2ae14aa405704cec3430c6689715.png"));
+        return tankIcon;
     case EnemyType::Grunt:
-        return QPixmap(QStringLiteral("D:/cpp/picture/a1036be708507b658f671266f2497722.png"));
+        return gruntIcon;
     case EnemyType::Priest:
     case EnemyType::Boss:
         return QPixmap();
@@ -85,6 +89,8 @@ Enemy::Enemy(EnemyType type, const QVector<QPointF> &path, int waveIndex)
     }
 
     // 波次越靠后，敌人的生命、速度和奖励都会提高。
+    (void)enemyIcon(m_type);
+
     m_maxHp = qRound(m_maxHp * (1.0 + waveIndex * 0.15));
     m_speed *= 1.0 + waveIndex * 0.02;
     m_reward += waveIndex * 5;
@@ -92,6 +98,7 @@ Enemy::Enemy(EnemyType type, const QVector<QPointF> &path, int waveIndex)
         m_speed = qMin<qreal>(m_speed, 44.0);
         m_reward += waveIndex * 25;
     }
+    m_speed *= 1.28;
     m_hp = m_maxHp;
     if (!m_path.isEmpty()) {
         setPos(m_path.first());

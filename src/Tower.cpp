@@ -1,4 +1,4 @@
-#include "Tower.h"
+﻿#include "Tower.h"
 
 #include "Enemy.h"
 #include "GameScene.h"
@@ -16,19 +16,19 @@ namespace
 // 根据炮塔类型选择图片素材；图片缺失时，paint() 会画备用图形。
 QPixmap towerIcon(TowerType type)
 {
-    QString path;
+    static const QPixmap archerIcon(QStringLiteral("D:/cpp/picture/52e89a65835d02850972baac4f243193.jpg"));
+    static const QPixmap mageIcon(QStringLiteral("D:/cpp/picture/0f655f924aaa3ad4a65908c7cc4ce424.jpg"));
+    static const QPixmap supportIcon(QStringLiteral("D:/cpp/picture/db481a2e05459caa531541cfffb37ae6.jpg"));
+
     switch (type) {
     case TowerType::Archer:
-        path = QStringLiteral("D:/cpp/picture/52e89a65835d02850972baac4f243193.jpg");
-        break;
+        return archerIcon;
     case TowerType::Mage:
-        path = QStringLiteral("D:/cpp/picture/0f655f924aaa3ad4a65908c7cc4ce424.jpg");
-        break;
+        return mageIcon;
     case TowerType::Support:
-        path = QStringLiteral("D:/cpp/picture/db481a2e05459caa531541cfffb37ae6.jpg");
-        break;
+        return supportIcon;
     }
-    return QPixmap(path);
+    return QPixmap();
 }
 
 // 法师攻击时临时创建一个播放器，播放完毕后自动释放。
@@ -74,6 +74,9 @@ Tower::Tower(TowerType type, const QPointF &position)
         m_slowDuration = 1.35;
         break;
     }
+
+    (void)towerIcon(m_type);
+    m_fireInterval *= 0.75;
 
     setPos(position);
     setZValue(20);
