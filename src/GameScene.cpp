@@ -25,6 +25,7 @@
 GameScene::GameScene(QObject *parent)
     : QGraphicsScene(parent)
 {
+    // 讲解点：GameScene 是游戏核心，统一管理地图、敌人、防御塔、子弹、资源和胜负状态。
     // 构造场景时先准备地图，再启动定时器驱动游戏循环。
     setupMap();
     loadBackground();
@@ -126,6 +127,7 @@ qreal GameScene::towerRangeBonusAt(const QPointF &position) const
 
 void GameScene::startNextWave()
 {
+    // 讲解点：startNextWave() 负责生成当前波次的刷怪队列，并限制上一波未清空时不能开新波。
     // 每次开始新波次前，先检查游戏是否结束或上一波是否还没清完。
     if (m_gameOver) {
         emit messageChanged(QStringLiteral("本局已经结束，请重新开始。"));
@@ -403,6 +405,7 @@ void GameScene::mousePressEvent(QGraphicsSceneMouseEvent *event)
 {
     qDebug() << "Clicked scene position:" << event->scenePos();
 
+    // 讲解点：鼠标交互也在场景里处理，点击已有塔是升级，点击空建塔点是建造新塔。
     // 鼠标左键点击炮塔时尝试升级；点击空建塔点时尝试建塔。
     if (m_gameOver || event->button() != Qt::LeftButton) {
         QGraphicsScene::mousePressEvent(event);
@@ -475,6 +478,7 @@ void GameScene::mousePressEvent(QGraphicsSceneMouseEvent *event)
 
 void GameScene::setupMap()
 {
+    // 讲解点：地图数据写在 setupMap() 中，包括敌人出生点、基地位置、三条路线和所有建塔点。
     // 地图坐标都基于背景图像素位置：出生点、基地、三条路线和建塔点。
     enemySpawnPoint = QPointF(1195, 260);
     playerBasePoint = QPointF(270, 880);
@@ -570,6 +574,7 @@ void GameScene::loadBackground()
 
 void GameScene::gameLoop()
 {
+    // 讲解点：gameLoop() 是最重要的主循环，每 30ms 更新一次刷怪、移动、攻击、子弹和胜负判断。
     if (m_gameOver || m_gamePaused) {
         return;
     }
@@ -597,10 +602,12 @@ void GameScene::gameLoop()
     handleSpecialEnemies();
 
     for (Tower *tower : std::as_const(m_towers)) {
+        // 讲解点：每一帧让所有防御塔自行判断冷却、索敌和发射子弹。
         tower->updateTower(this, dt);
     }
 
     for (Projectile *projectile : std::as_const(m_projectiles)) {
+        // 讲解点：子弹每帧追踪目标，命中后在 Projectile 内部结算伤害和特殊效果。
         projectile->updateObject(dt);
     }
 
@@ -934,6 +941,7 @@ void GameScene::finishGame(bool victory, const QString &message)
         return;
     }
 
+    // 讲解点：胜负只在 GameScene 中判定，判定后通过 gameFinished 信号通知 MainWindow 播放结算界面。
     // 停止刷怪和主循环，再通过信号通知主窗口播放结算表现。
     m_gameOver = true;
     m_spawnQueue.clear();

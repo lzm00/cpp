@@ -11,6 +11,7 @@ class Enemy;
 class GameScene;
 
 // 防御塔类型：弓箭塔、法师塔、辅助塔。
+// 讲解点：TowerType 定义三类防御塔：射手、法师、辅助。
 enum class TowerType
 {
     Archer,
@@ -30,6 +31,7 @@ enum class TowerBranch
 };
 
 // Tower 负责寻找目标、按冷却时间攻击，以及升级自身属性。
+// 讲解点：Tower 负责冷却计时、选择目标、发射子弹，以及升级和分支强化。
 class Tower : public QGraphicsItem, public GameObject
 {
 public:

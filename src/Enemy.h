@@ -8,6 +8,7 @@
 #include <QPointF>
 
 // 敌人类型：普通敌人、坦克敌人、快速敌人。
+// 讲解点：EnemyType 定义敌人种类，不同类型会在 Enemy 构造函数里获得不同属性。
 enum class EnemyType
 {
     Grunt,
@@ -18,6 +19,7 @@ enum class EnemyType
 };
 
 // Enemy 同时是 Qt 图形项和游戏对象：负责绘制、移动、受伤和状态效果。
+// 讲解点：Enemy 同时是可绘制对象和可更新对象，负责移动、受伤、状态效果和到达基地判断。
 class Enemy : public QObject, public QGraphicsItem, public GameObject
 {
 public:

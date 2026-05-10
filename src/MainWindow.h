@@ -14,6 +14,7 @@ class QVideoWidget;
 class QWidget;
 
 // 主窗口负责搭建界面、连接按钮和游戏场景，并控制视频/音频播放。
+// 讲解点：MainWindow 是界面控制中心，负责显示地图、右侧面板、视频和音频，并把操作转发给 GameScene。
 class MainWindow : public QMainWindow
 {
     Q_OBJECT

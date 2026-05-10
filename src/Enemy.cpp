@@ -34,6 +34,7 @@ Enemy::Enemy(EnemyType type, const QVector<QPointF> &path, int waveIndex)
     : m_path(path),
       m_type(type)
 {
+    // 讲解点：Enemy 根据类型初始化不同属性，例如普通、坦克、刺客、牧师和 Boss。
     // 不同敌人类型先设置基础数值。
     switch (type) {
     case EnemyType::Grunt:
@@ -215,6 +216,7 @@ void Enemy::paint(QPainter *painter, const QStyleOptionGraphicsItem *, QWidget *
 
 void Enemy::updateObject(qreal dt)
 {
+    // 讲解点：敌人的每帧更新包括状态倒计时、冻结判断，以及沿路径点向基地移动。
     if (m_reachedEnd || isDead() || m_path.size() < 2) {
         return;
     }
@@ -270,6 +272,7 @@ void Enemy::updateObject(qreal dt)
 
 void Enemy::applyDamage(int amount)
 {
+    // 讲解点：敌人受伤、治疗、减速、灼烧等状态都封装在 Enemy 自己的方法里。
     // 护盾状态下不受伤害。
     if (isShielded) {
         return;
@@ -366,6 +369,7 @@ void Enemy::speedBoostFor(int durationMs, qreal multiplier)
 
 void Enemy::updateTerrainState(bool inRiver, bool inBush)
 {
+    // 讲解点：地形会影响敌人状态，河流减速，草丛让敌人短时间隐藏。
     m_terrainSpeedMultiplier = inRiver ? 0.58 : 1.0;
     if (inBush) {
         m_hiddenTime = qMax(m_hiddenTime, 0.75);

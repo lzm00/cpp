@@ -9,6 +9,7 @@
 class Enemy;
 
 // Projectile 表示炮塔发出的子弹：追踪一个目标，命中后造成伤害和可能的减速。
+// 讲解点：Projectile 负责追踪目标，并在命中时结算伤害、暴击、减速、灼烧或爆炸效果。
 class Projectile : public QGraphicsItem, public GameObject
 {
 public:

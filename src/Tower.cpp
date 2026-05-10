@@ -54,6 +54,7 @@ void playMageAttackSound()
 Tower::Tower(TowerType type, const QPointF &position)
     : m_type(type)
 {
+    // 讲解点：Tower 根据类型初始化攻击方式，射手快、法师伤害高、辅助带减速。
     // 不同炮塔类型对应不同的初始属性。
     switch (type) {
     case TowerType::Archer:
@@ -148,6 +149,7 @@ void Tower::updateObject(qreal dt)
 
 void Tower::updateTower(GameScene *scene, qreal dt)
 {
+    // 讲解点：防御塔每帧更新冷却，冷却结束后在射程内选择最接近基地的敌人攻击。
     updateObject(dt);
 
     if (m_branch == TowerBranch::SupportVulnerability && m_vulnerabilityMultiplier > 1.0) {
@@ -188,6 +190,7 @@ bool Tower::needsBranchChoice() const
 
 void Tower::upgrade(TowerBranch branch)
 {
+    // 讲解点：防御塔升级会提升属性，3 级之后可以选择不同强化分支。
     if (!canUpgrade()) {
         return;
     }
@@ -385,6 +388,7 @@ QString Tower::branchName(TowerBranch branch)
 
 Enemy *Tower::selectTarget(GameScene *scene) const
 {
+    // 讲解点：索敌策略是优先攻击路径进度最大的敌人，也就是最接近基地的敌人。
     const auto enemies = scene->enemiesInRange(pos(), m_range + scene->towerRangeBonusAt(pos()));
     Enemy *best = nullptr;
     qreal bestProgress = -1.0;

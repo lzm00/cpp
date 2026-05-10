@@ -34,6 +34,7 @@ Projectile::Projectile(const QPointF &start,
       m_burnIntervalMs(burnIntervalMs),
       m_color(color)
 {
+    // 讲解点：Projectile 表示塔发出的子弹，保存目标、伤害和附加效果参数。
     // 子弹从炮塔位置生成，显示层级高于敌人和炮塔。
     setPos(start);
     setZValue(30);
@@ -54,6 +55,7 @@ void Projectile::paint(QPainter *painter, const QStyleOptionGraphicsItem *, QWid
 
 void Projectile::updateObject(qreal dt)
 {
+    // 讲解点：子弹每帧向目标当前位置移动，如果目标已死亡或被删除，就标记为结束。
     if (!m_target || m_target->isDead()) {
         m_finished = true;
         return;
@@ -66,6 +68,7 @@ void Projectile::updateObject(qreal dt)
     const qreal step = m_speed * dt;
 
     if (toTarget.length() <= step + 8.0) {
+        // 讲解点：命中时统一结算普通伤害、暴击、减速、灼烧和范围爆炸。
         // 进入命中距离后结算伤害；辅助塔子弹还会附加减速。
         int finalDamage = m_damage;
         if (m_critChance > 0.0 && QRandomGenerator::global()->generateDouble() < m_critChance) {

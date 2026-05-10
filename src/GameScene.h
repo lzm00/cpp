@@ -29,6 +29,7 @@ struct BuildSpot
 };
 
 // GameScene 是游戏核心：管理地图、敌人、炮塔、子弹、波次和胜负判定。
+// 讲解点：GameScene 是游戏逻辑中心，负责主循环、波次、建塔、技能、资源统计和胜负判定。
 class GameScene : public QGraphicsScene
 {
     Q_OBJECT

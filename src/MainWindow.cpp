@@ -71,6 +71,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
       m_scene(new GameScene(this))
 {
+    // 讲解点：MainWindow 负责界面层，核心游戏规则不写在这里，而是交给 GameScene。
     // 主界面由左侧游戏地图和右侧控制面板组成。
     setWindowTitle(QStringLiteral("峡谷守卫战 Valley Guardian TD"));
     resize(1260, 800);
@@ -86,6 +87,7 @@ MainWindow::MainWindow(QWidget *parent)
     rootLayout->setSpacing(6);
 
     auto *view = new AutoFitGraphicsView(m_scene, m_gamePage);
+    // 讲解点：QGraphicsView 只是显示容器，真正的游戏对象都放在 m_scene 这个 QGraphicsScene 中。
     // QGraphicsView 负责把 GameScene 显示出来。
     view->setRenderHint(QPainter::Antialiasing, true);
     view->setMinimumSize(940, 704);
@@ -350,6 +352,7 @@ MainWindow::MainWindow(QWidget *parent)
     };
 
     connect(startButton, &QPushButton::clicked, this, &MainWindow::handleStartButtonClicked);
+    // 讲解点：右侧按钮通过 Qt 信号槽和 GameScene 连接，点击按钮就能触发开波、技能、重开等逻辑。
     // 按钮和场景之间通过 Qt 信号槽连接。
     connect(battleSongButton, &QPushButton::clicked, this, &MainWindow::playBattleSong);
     connect(secondBattleSongButton, &QPushButton::clicked, this, &MainWindow::playSecondBattleSong);
@@ -396,6 +399,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 
 void MainWindow::updateStats(int gold, int lives, int wave, int maxWaves)
 {
+    // 讲解点：GameScene 只负责发出数据变化信号，MainWindow 负责把数据更新到界面文字上。
     // 游戏场景发出 statsChanged 后，这里刷新右侧状态文本。
     m_goldLabel->setText(QStringLiteral("金币：%1").arg(gold));
     m_livesLabel->setText(QStringLiteral("基地生命：%1").arg(lives));
@@ -425,6 +429,7 @@ void MainWindow::restartAfterResultVideo()
 
 void MainWindow::handleStartButtonClicked()
 {
+    // 讲解点：开始波次时，界面层先处理音效，再调用 GameScene::startNextWave() 推进游戏流程。
     // 开始新波次时，先播放按钮音效和背景音乐。
     playStartSound();
     startBackgroundMusic();
@@ -516,6 +521,7 @@ void MainWindow::selectTower(TowerType type)
 
 QWidget *MainWindow::createVideoOverlay(QWidget *parent)
 {
+    // 讲解点：视频遮罩层用于开场和胜负结算，属于表现层，不参与敌人和防御塔计算。
     // 覆盖在游戏页面上的全屏视频层，用于开场和结算。
     auto *overlay = new QWidget(parent);
     overlay->setObjectName(QStringLiteral("resultOverlay"));
